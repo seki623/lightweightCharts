@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GOLD M1 Replay</title>
+<script src="https://unpkg.com/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;font-family:Arial,"Noto Sans JP",sans-serif;background:#111;color:#ddd}body{display:flex;flex-direction:column;overflow:hidden}.toolbar{padding:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#181818;border-bottom:1px solid #333}.toolbar label{font-size:12px;color:#aaa}.toolbar input,.toolbar button,.toolbar select{height:32px;background:#222;color:#eee;border:1px solid #444;border-radius:4px;padding:0 9px}.toolbar button{cursor:pointer}.toolbar button:hover{background:#303030}.status{margin-left:auto;font-size:12px;color:#aaa}.chart{position:relative;flex:1;min-height:0}.panel{position:absolute;left:10px;top:10px;z-index:10;background:rgba(20,20,20,.92);border:1px solid #444;border-radius:5px;padding:9px;font-size:12px;line-height:1.6;pointer-events:none}.panel b{color:#fff}.hint{padding:5px 10px;background:#181818;border-top:1px solid #333;font-size:11px;color:#888}
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <label>CSV</label><input id="file" type="file" accept=".csv,text/csv">
+  <label>開始</label><input id="start" type="datetime-local">
+  <button id="goto">Go To</button>
+  <button id="prev">◀ 1本</button><button id="next">1本 ▶</button>
+  <button id="play">▶ 再生</button><button id="stop">■ 停止</button>
+  <label>速度</label><select id="speed"><option value="1000">1x</option><option value="500">2x</option><option value="200">5x</option><option value="100">10x</option><option value="50">20x</option></select>
+  <span id="status" class="status"></span>
+</div>
+<div id="chart" class="chart"><div class="panel"><b>GOLD M1 Replay</b><br><span id="info"></span></div></div>
+<div class="hint">CSV形式: 日付,時刻,Open,High,Low,Close,Volume　例: 2025.01.02,08:00,2634.02,2634.02,2633.22,2633.41,184</div>
+<script>
+const { createChart, CandlestickSeries } = LightweightCharts;
+const chartEl=document.getElementById('chart');
+const chart=createChart(chartEl,{layout:{background:{type:'solid',color:'#111'},textColor:'#bbb'},grid:{vertLines:{color:'#222'},horzLines:{color:'#222'}},rightPriceScale:{borderColor:'#444'},timeScale:{borderColor:'#444,timeVisible:true,secondsVisible:false},crosshair:{mode:0}});
+const series=chart.addSeries(CandlestickSeries,{upColor:'#26a69a',downColor:'#ef5350',borderVisible:false,wickUpColor:'#26a69a',wickDownColor:'#ef5350'});
+let data=[];let replayIndex=0;let timer=null;
+const $=id=>document.getElementById(id);
+function resize(){chart.resize(chartEl.clientWidth,chartEl.clientHeight)}
+new ResizeObserver(resize).observe(chartEl);
+function seedData(){
+  const out=[];let p=2635;let t=Date.UTC(2025,0,2,8,0,0)/1000;
+  for(let i=0;i<720;i++){const o=p;const n=Math.sin(i/17)*.8+Math.sin(i/5)*.25+(Math.random()-.5)*.8;const c=o+n;const h=Math.max(o,c)+Math.random()*.45;const l=Math.min(o,c)-Math.random()*.45;out.push({time:t+i*60,open:+o.toFixed(2),high:+h.toFixed(2),low:+l.toFixed(2),close:+c.toFixed(2)});p=c}
+  return out;
+}
+function render(fit=false){series.setData(data.slice(0,replayIndex+1));if(fit)chart.timeScale().fitContent();updateInfo()}
+function updateInfo(){if(!data.length)return;const d=data[replayIndex];$('status').textContent=`${replayIndex+1} / ${data.length}`;$('info').textContent=`${formatTime(d.time)}  O ${d.open.toFixed(2)}  H ${d.high.toFixed(2)}  L ${d.low.toFixed(2)}  C ${d.close.toFixed(2)}`}
+function formatTime(sec){const d=new Date(sec*1000);const z=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}`}
+function step(n){replayIndex=Math.max(0,Math.min(data.length-1,replayIndex+n));render(false)}
+function startAtDate(){const v=$('start').value;if(!v)return;const target=new Date(v).getTime()/1000;let idx=data.findIndex(x=>x.time>=target);if(idx<0)idx=data.length-1;replayIndex=idx;stop();render(true)}
+function play(){if(timer||replayIndex>=data.length-1)return;timer=setInterval(()=>{if(replayIndex>=data.length-1){stop();return}step(1)},Number($('speed').value))}
+function stop(){if(timer){clearInterval(timer);timer=null}}
+$('next').onclick=()=>step(1);$('prev').onclick=()=>step(-1);$('play').onclick=play;$('stop').onclick=stop;$('goto').onclick=startAtDate;$('speed').onchange=()=>{if(timer){stop();play()}};
+$('file').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{data=parseCsv(await f.text());if(!data.length)throw new Error('有効なデータがありません');replayIndex=0;render(true)}catch(err){alert('CSVを読み込めませんでした。\n'+err.message)}};
+function parseCsv(text){const rows=text.replace(/^\uFEFF/,'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);const out=[];for(const row of rows){const c=row.split(',').map(x=>x.trim());if(c.length<6)continue;if(!/^\d{4}[.\/-]\d{1,2}[.\/-]\d{1,2}$/.test(c[0]))continue;const ds=c[0].replaceAll('.','-').replaceAll('/','-');const ts=new Date(`${ds}T${c[1]}:00`);if(Number.isNaN(ts.getTime()))continue;const o=Number(c[2]),h=Number(c[3]),l=Number(c[4]),cl=Number(c[5]);if([o,h,l,cl].some(Number.isNaN))continue;out.push({time:Math.floor(ts.getTime()/1000),open:o,high:h,low:l,close:cl});}out.sort((a,b)=>a.time-b.time);return out}
+data=seedData();render(true);resize();
+</script>
+</body>
+</html>
